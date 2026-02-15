@@ -1,0 +1,39 @@
+#!/bin/bash
+# ── Show Tailscale setup commands for all rent-a-mac machines ────────────────
+# Run this to get copy-paste commands for each machine.
+#
+# Usage: ./show-tailscale
+# ─────────────────────────────────────────────────────────────────────────────
+
+AUTH_KEY="${TAILSCALE_AUTH_KEY:-tskey-auth-kGYKGUP7Uw11CNTRL-sSRSxTwAGaB2A4eRXYEPaBWzyUZ7t2eJ}"
+SCRIPT_URL="https://raw.githubusercontent.com/solidareasy/scopio-devops-scripts/main/setup-tailscale.sh"
+
+MACHINES=(
+    mac-mini-01
+    mac-mini-02
+    mac-mini-03
+    mac-mini-04
+    mac-mini-05
+    mac-mini-06
+    mac-mini-07
+    mac-mini-08
+    mac-mini-09
+)
+
+echo ""
+echo "═══════════════════════════════════════════════════════════════════"
+echo "  Tailscale Setup Commands — Rent-a-Mac Machines"
+echo "  Run each command on the corresponding machine (step 0, one-time)"
+echo "═══════════════════════════════════════════════════════════════════"
+echo ""
+
+for host in "${MACHINES[@]}"; do
+    echo "── $host ──"
+    echo "export TAILSCALE_HOSTNAME=$host TAILSCALE_AUTH_KEY=$AUTH_KEY && curl -fsSL $SCRIPT_URL | bash"
+    echo ""
+done
+
+echo "═══════════════════════════════════════════════════════════════════"
+echo "  After setup, deploy from your dev machine:"
+echo "    yarn deploy mac-mini-01 mac-mini-02 ... mac-mini-09"
+echo "═══════════════════════════════════════════════════════════════════"
