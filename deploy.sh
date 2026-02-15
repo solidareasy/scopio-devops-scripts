@@ -1,50 +1,71 @@
 #!/bin/bash
 set -e
 
-# ── Deploy Scopio Workers to multiple machines ──────────────────────────────
-# Copies the worker tarball and optionally starts workers via Tailscale SSH.
-# No env files are deployed — env vars must already be set on each target.
+# ── Deploy Scopio Workers to machines via Tailscale SSH ──────────────────────
+# Clones the build repo, writes .env, and starts workers on each target.
+# Run from your dev machine after 'yarn build:pack'.
 #
 # Usage:
-#   yarn deploy:machines mac1 mac2 mac3 ...
-#   DEPLOY_HOSTS="mac1 mac2 mac3" yarn deploy:machines
+#   yarn deploy:machines mac-mini-01 mac-mini-02 mac-mini-03
+#   yarn deploy:machines mac-mini-01 mac-mini-02 -- ingest --daemon --concurrency 4
 #
-# Environment variables:
-#   DEPLOY_HOSTS       — Space-separated list of hostnames/IPs
-#   DEPLOY_USER        — SSH user (default: current user)
-#   DEPLOY_DIR         — Remote install dir (default: ~/scopio-workers)
-#   DEPLOY_START_CMD   — Worker command to run after deploy (optional)
-#                        e.g. "broker --i2 --e4 --t1 --p8"
+# Environment variables (loaded from config/envs/<env>/common.envrc or set manually):
+#   DEPLOY_USER        — SSH user on targets (default: rentamac)
+#   DEPLOY_DIR         — Remote install dir (default: ~/Desktop/studio)
+#   WORKER_CMD         — Worker command (default: broker --i2 --e4 --t1 --p8)
+#   GH_TOKEN           — GitHub token to clone private build repo (required)
+#
+#   # .env written to each machine:
+#   DATABASE_URL, REDIS_URL, AWS_REGION, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
+#   SCOPIO_DRIVER_BUCKET, SCOPIO_STUDIO_BUCKET
 # ─────────────────────────────────────────────────────────────────────────────
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-TARBALL="$ROOT_DIR/dist/scopio-workers.tar.gz"
+BUILD_REPO="https://github.com/solidareasy/scopio-studio-build.git"
+DEPLOY_USER="${DEPLOY_USER:-rentamac}"
+DEPLOY_DIR="${DEPLOY_DIR:-~/Desktop/studio}"
+WORKER_CMD="${WORKER_CMD:-broker --i2 --e4 --t1 --p8}"
+SSH_OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=10"
 
-DEPLOY_USER="${DEPLOY_USER:-$(whoami)}"
-DEPLOY_DIR="${DEPLOY_DIR:-~/scopio-workers}"
-DEPLOY_START_CMD="${DEPLOY_START_CMD:-}"
+# Parse hosts and optional worker command after --
+HOSTS=()
+for arg in "$@"; do
+    if [ "$arg" = "--" ]; then
+        shift
+        WORKER_CMD="$*"
+        break
+    fi
+    HOSTS+=("$arg")
+    shift
+done
 
-# Collect hosts from args or env
-if [ $# -gt 0 ]; then
-    HOSTS=("$@")
-elif [ -n "$DEPLOY_HOSTS" ]; then
-    read -ra HOSTS <<< "$DEPLOY_HOSTS"
-else
-    echo "Usage: $0 <host1> <host2> ... or set DEPLOY_HOSTS"
+if [ ${#HOSTS[@]} -eq 0 ]; then
+    echo "Usage: $0 <host1> <host2> ... [-- worker_cmd]"
+    echo ""
+    echo "Examples:"
+    echo "  yarn deploy:machines mac-mini-01 mac-mini-02 mac-mini-03"
+    echo "  yarn deploy:machines mac-mini-01 -- ingest --daemon --concurrency 4"
     exit 1
 fi
 
-# ── Verify tarball exists ───────────────────────────────────────────────────
+# Validate required env vars
+MISSING=()
+for var in GH_TOKEN DATABASE_URL REDIS_URL AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY SCOPIO_DRIVER_BUCKET SCOPIO_STUDIO_BUCKET; do
+    if [ -z "${!var}" ]; then MISSING+=("$var"); fi
+done
 
-if [ ! -f "$TARBALL" ]; then
-    echo "[error] $TARBALL not found. Run 'yarn build:pack' first."
+if [ ${#MISSING[@]} -gt 0 ]; then
+    echo "[error] Missing required environment variables:"
+    printf "  %s\n" "${MISSING[@]}"
+    echo ""
+    echo "Load your env first: source .envrc (or export them manually)"
     exit 1
 fi
 
-SIZE=$(du -sh "$TARBALL" | cut -f1)
-echo "[deploy] Deploying scopio-workers.tar.gz ($SIZE) to ${#HOSTS[@]} machines..."
-echo "[deploy] No env files will be deployed."
+CLONE_URL="https://${GH_TOKEN}@github.com/solidareasy/scopio-studio-build.git"
+
+echo "[deploy] Deploying to ${#HOSTS[@]} machines via Tailscale SSH"
+echo "[deploy] Worker command: $WORKER_CMD"
+echo "[deploy] Target dir: $DEPLOY_DIR"
 echo ""
 
 # ── Deploy to each host in parallel ─────────────────────────────────────────
@@ -53,41 +74,55 @@ deploy_to_host() {
     local host="$1"
     local target="$DEPLOY_USER@$host"
 
-    echo "[$host] Uploading..."
-    scp -o StrictHostKeyChecking=no "$TARBALL" "$target:/tmp/scopio-workers.tar.gz"
+    echo "[$host] Connecting..."
 
-    echo "[$host] Extracting..."
-    ssh -o StrictHostKeyChecking=no "$target" bash << REMOTEEOF
+    ssh $SSH_OPTS "$target" bash -s << REMOTEEOF
         set -e
+        export PATH="/opt/homebrew/opt/node@22/bin:\$PATH"
         DEPLOY_DIR="$DEPLOY_DIR"
 
-        # Stop existing workers
+        # ── Stop existing workers ──
         if [ -f "\$DEPLOY_DIR/worker.pid" ]; then
             OLD_PID=\$(cat "\$DEPLOY_DIR/worker.pid")
-            kill "\$OLD_PID" 2>/dev/null || true
+            kill "\$OLD_PID" 2>/dev/null && echo "Stopped old worker (pid=\$OLD_PID)" || true
             sleep 1
         fi
 
-        # Extract
-        rm -rf "\$DEPLOY_DIR"
-        mkdir -p "\$DEPLOY_DIR"
-        tar -xzf /tmp/scopio-workers.tar.gz -C "\$DEPLOY_DIR" --strip-components=1
-        rm -f /tmp/scopio-workers.tar.gz
+        # ── Clone or pull ──
+        if [ -d "\$DEPLOY_DIR/.git" ]; then
+            echo "Updating repo..."
+            cd "\$DEPLOY_DIR"
+            git remote set-url origin "$CLONE_URL"
+            git fetch origin main --force
+            git reset --hard origin/main
+        else
+            echo "Cloning repo..."
+            rm -rf "\$DEPLOY_DIR"
+            git clone "$CLONE_URL" "\$DEPLOY_DIR"
+        fi
 
-        echo "Extracted to \$DEPLOY_DIR"
-REMOTEEOF
+        cd "\$DEPLOY_DIR"
+        chmod +x worker.sh
 
-    # Start workers if command specified
-    if [ -n "$DEPLOY_START_CMD" ]; then
-        echo "[$host] Starting: worker.sh $DEPLOY_START_CMD"
-        ssh -o StrictHostKeyChecking=no "$target" bash << REMOTEEOF
-            set -e
-            cd "$DEPLOY_DIR"
-            nohup ./worker.sh $DEPLOY_START_CMD > worker.log 2>&1 &
-            echo \$! > worker.pid
-            echo "Started (pid=\$!)"
+        # ── Write .env ──
+        cat > .env << 'ENVEOF'
+DATABASE_URL=$DATABASE_URL
+REDIS_URL=$REDIS_URL
+AWS_REGION=${AWS_REGION:-us-east-1}
+AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
+AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+SCOPIO_DRIVER_BUCKET=$SCOPIO_DRIVER_BUCKET
+SCOPIO_STUDIO_BUCKET=$SCOPIO_STUDIO_BUCKET
+ENVEOF
+        chmod 600 .env
+        echo ".env written"
+
+        # ── Start workers ──
+        echo "Starting: ./worker.sh $WORKER_CMD"
+        nohup ./worker.sh $WORKER_CMD > worker.log 2>&1 &
+        echo \$! > worker.pid
+        echo "Started (pid=\$!)"
 REMOTEEOF
-    fi
 
     echo "[$host] Done."
 }
@@ -98,7 +133,7 @@ for host in "${HOSTS[@]}"; do
     PIDS+=($!)
 done
 
-# Wait for all deployments
+# Wait for all
 FAILED=0
 for i in "${!PIDS[@]}"; do
     if ! wait "${PIDS[$i]}"; then
@@ -116,16 +151,5 @@ else
 fi
 
 echo ""
-echo "To start workers manually on each machine:"
-echo "  ssh user@host 'cd $DEPLOY_DIR && ./worker.sh broker --i2 --e4 --t1 --p8'"
-echo ""
-echo "Or run individual workers:"
-echo "  ./worker.sh ingest --daemon --concurrency 2"
-echo "  ./worker.sh embed  --daemon --concurrency 4"
-echo "  ./worker.sh train  --daemon"
-echo "  ./worker.sh predict --daemon --concurrency 8"
-echo ""
-echo "CLI (batch) mode:"
-echo "  ./worker.sh ingest --in s3://scopio-driver/gold"
-echo "  ./worker.sh embed  --in s3://scopio-driver/gold"
-echo "  ./worker.sh train  --in s3://scopio-driver/gold"
+echo "Check logs:    ssh $DEPLOY_USER@<host> 'tail -f $DEPLOY_DIR/worker.log'"
+echo "Stop workers:  ssh $DEPLOY_USER@<host> 'kill \$(cat $DEPLOY_DIR/worker.pid)'"

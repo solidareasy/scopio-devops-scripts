@@ -20,7 +20,7 @@ set -e
 #   SCOPIO_DRIVER_BUCKET="scopio-driver" \
 #   SCOPIO_STUDIO_BUCKET="scopio-studio" \
 #   WORKER_CMD="broker --i2 --e4 --t1 --p8" \
-#   && curl -fsSL https://raw.githubusercontent.com/solidareasy/scopio-devops-scripts/main/bootstrap-worker.sh | bash
+#   && curl -fsSL https://gist.githubusercontent.com/viniciustrindade/d3d1c76b9c2c9d5d98e874c8feac4350/raw/bootstrap-worker.sh | bash
 #
 # Environment variables:
 #   TAILSCALE_AUTH_KEY     — Tailscale auth key (required)
