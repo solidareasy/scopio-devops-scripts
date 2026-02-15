@@ -222,3 +222,12 @@ if [ "$HEADLESS" = "true" ] && [ "$PLATFORM" = "darwin" ]; then
     brew services start tailscale 2>/dev/null || true
     echo "[ok] tailscale service enabled (survives reboot)"
 fi
+
+# ── 5. Clear shell history (protect auth key) ────────────────────────────
+
+echo "[clean] Clearing shell history..."
+history -c 2>/dev/null || true
+history -w 2>/dev/null || true
+rm -f ~/.bash_history ~/.zsh_history ~/.python_history 2>/dev/null || true
+cat /dev/null > "${HISTFILE:-~/.zsh_history}" 2>/dev/null || true
+echo "[ok] Shell history cleared"
