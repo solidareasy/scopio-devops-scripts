@@ -91,8 +91,14 @@ if [ -f "$MODEL_DIR/package.json" ]; then
     cp "$MODEL_DIR/package.json" packages/model/package.json
 fi
 
-# Root package.json
-cp "$ROOT_DIR/package.json" package.json
+# Root package.json (minimal — no workspaces, no postinstall)
+cat > package.json << 'PKGJSON'
+{
+    "name": "scopio-studio-build",
+    "version": "0.1.0",
+    "private": true
+}
+PKGJSON
 
 # ── 3. Worker entry script ─────────────────────────────────────────────────
 
