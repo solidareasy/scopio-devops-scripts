@@ -16,7 +16,7 @@ set -e
 # ─────────────────────────────────────────────────────────────────────────────
 
 PLATFORM=$(uname -s | tr '[:upper:]' '[:lower:]')
-HEADLESS="${TAILSCALE_HEADLESS:-false}"
+HEADLESS="${TAILSCALE_HEADLESS:-true}"
 
 case "$PLATFORM" in
     mingw*|msys*|cygwin*) PLATFORM="windows" ;;
