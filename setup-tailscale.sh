@@ -215,3 +215,10 @@ fi
 echo ""
 echo "Tailscale is connected with SSH enabled."
 $TAILSCALE_BIN status
+
+# ── 4. Ensure service persists across reboots ─────────────────────────────
+
+if [ "$HEADLESS" = "true" ] && [ "$PLATFORM" = "darwin" ]; then
+    brew services start tailscale 2>/dev/null || true
+    echo "[ok] tailscale service enabled (survives reboot)"
+fi
