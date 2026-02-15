@@ -66,6 +66,25 @@ find_tailscale() {
 
 # ── 1. Install ──────────────────────────────────────────────────────────────
 
+
+# ── 0. Remove desktop (cask) Tailscale if switching to headless ───────────
+
+if [ "$HEADLESS" = "true" ] && [ "$PLATFORM" = "darwin" ]; then
+    if [ -d "/Applications/Tailscale.app" ]; then
+        echo "[clean] Removing desktop Tailscale.app (switching to headless)..."
+        # Stop the GUI app
+        osascript -e 'quit app "Tailscale"' 2>/dev/null || true
+        sleep 1
+        # Uninstall cask if installed via brew
+        brew uninstall --cask tailscale 2>/dev/null || true
+        # Remove manually if cask uninstall didn't catch it
+        if [ -d "/Applications/Tailscale.app" ]; then
+            rm -rf "/Applications/Tailscale.app"
+        fi
+        echo "[ok] Desktop Tailscale removed"
+    fi
+fi
+
 if ! find_tailscale; then
     echo "Tailscale not found. Installing..."
 
