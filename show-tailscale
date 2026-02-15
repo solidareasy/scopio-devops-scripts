@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/zsh
 # ── Show Tailscale setup commands for all rent-a-mac machines ────────────────
 # Run this to get copy-paste commands for each machine.
 #
